@@ -64,9 +64,12 @@
   NSData *data = [AVCapturePhotoOutput
       JPEGPhotoDataRepresentationForJPEGSampleBuffer:photoSampleBuffer
                             previewPhotoSampleBuffer:previewPhotoSampleBuffer];
+  UIImage *image = [UIImage imageWithCGImage:[UIImage imageWithData:data].CGImage
+                                          scale:1.0
+                                    orientation:[self getImageRotation]];
 
   // TODO(sigurdm): Consider writing file asynchronously.
-  bool success = [data writeToFile:_path atomically:YES];
+  bool success = [UIImageJPEGRepresentation(image,1.0) writeToFile:_path atomically:YES];
 
   if (!success) {
     [_result sendErrorWithCode:@"IOError" message:@"Unable to write file" details:nil];
@@ -86,14 +89,46 @@
 
   NSData *photoData = [photo fileDataRepresentation];
 
-  bool success = [photoData writeToFile:_path atomically:YES];
+  UIImage *image = [UIImage imageWithCGImage:[UIImage imageWithData:photoData].CGImage
+                                            scale:1.0
+                                      orientation:[self getImageRotation]];
+    
+  bool success = [UIImageJPEGRepresentation(image,1.0) writeToFile:_path atomically:YES];
   if (!success) {
     [_result sendErrorWithCode:@"IOError" message:@"Unable to write file" details:nil];
     return;
   }
   [_result sendSuccessWithData:_path];
 }
+
+- (UIImageOrientation)getImageRotation {
+    UIDeviceOrientation deviceOrientation = [[UIDevice currentDevice] orientation];
+    switch (deviceOrientation) {
+        case UIDeviceOrientationPortrait:
+            return UIImageOrientationRight;
+            break;
+        case UIDeviceOrientationFaceUp:
+            return UIImageOrientationRight;
+            break;
+        case UIDeviceOrientationLandscapeRight:
+            return UIImageOrientationDown;
+        case UIDeviceOrientationLandscapeLeft:
+            return UIImageOrientationUp;
+            break;
+        case UIDeviceOrientationPortraitUpsideDown:
+            return  UIImageOrientationLeft;
+            break;
+        case UIDeviceOrientationFaceDown:
+            return  UIImageOrientationLeft;
+            break;
+        default:
+            return UIImageOrientationUp;
+            break;
+    }
+}
 @end
+
+
 
 // Mirrors FlashMode in flash_mode.dart
 typedef enum {
@@ -1186,6 +1221,24 @@ NSString *const errorMethod = @"error";
   }
 }
 
+- (CGAffineTransform)getTransform:(CGAffineTransform)transform {
+
+    UIDeviceOrientation deviceOrientation = [[UIDevice currentDevice] orientation];
+
+    switch (deviceOrientation) {
+            case UIDeviceOrientationPortrait:
+            return transform;
+            case UIDeviceOrientationPortraitUpsideDown:
+            return CGAffineTransformRotate(transform,  M_PI);
+            case UIDeviceOrientationLandscapeLeft:
+            return CGAffineTransformRotate(transform,  -M_PI/2);
+            case UIDeviceOrientationLandscapeRight:
+            return CGAffineTransformRotate(transform,  M_PI/2);
+            default:
+            return transform;
+            }
+}
+
 - (BOOL)setupWriterForPath:(NSString *)path {
   NSError *error = nil;
   NSURL *outputURL;
@@ -1211,6 +1264,11 @@ NSString *const errorMethod = @"error";
       recommendedVideoSettingsForAssetWriterWithOutputFileType:AVFileTypeMPEG4];
   _videoWriterInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo
                                                          outputSettings:videoSettings];
+
+  CGAffineTransform currTransform =[_videoWriterInput transform];
+  CGAffineTransform transform  = [self getTransform: currTransform];
+  [_videoWriterInput setTransform: transform ];
+    
 
   _videoAdaptor = [AVAssetWriterInputPixelBufferAdaptor
       assetWriterInputPixelBufferAdaptorWithAssetWriterInput:_videoWriterInput
@@ -1311,7 +1369,6 @@ NSString *const errorMethod = @"error";
   _registry = registry;
   _messenger = messenger;
   [self initDeviceEventMethodChannel];
-  [self startOrientationListener];
   return self;
 }
 
@@ -1321,35 +1378,9 @@ NSString *const errorMethod = @"error";
                                   binaryMessenger:_messenger];
 }
 
-- (void)startOrientationListener {
-  [[UIDevice currentDevice] beginGeneratingDeviceOrientationNotifications];
-  [[NSNotificationCenter defaultCenter] addObserver:self
-                                           selector:@selector(orientationChanged:)
-                                               name:UIDeviceOrientationDidChangeNotification
-                                             object:[UIDevice currentDevice]];
-}
 
-- (void)orientationChanged:(NSNotification *)note {
-  UIDevice *device = note.object;
-  UIDeviceOrientation orientation = device.orientation;
 
-  if (orientation == UIDeviceOrientationFaceUp || orientation == UIDeviceOrientationFaceDown) {
-    // Do not change when oriented flat.
-    return;
-  }
 
-  if (_camera) {
-    [_camera setDeviceOrientation:orientation];
-  }
-
-  [self sendDeviceOrientation:orientation];
-}
-
-- (void)sendDeviceOrientation:(UIDeviceOrientation)orientation {
-  [_deviceEventMethodChannel
-      invokeMethod:@"orientation_changed"
-         arguments:@{@"orientation" : getStringForUIDeviceOrientation(orientation)}];
-}
 
 - (void)handleMethodCall:(FlutterMethodCall *)call result:(FlutterResult)result {
   if (_dispatchQueue == nil) {
@@ -1458,7 +1489,6 @@ NSString *const errorMethod = @"error";
                    @([_camera.captureDevice isExposurePointOfInterestSupported]),
                @"focusPointSupported" : @([_camera.captureDevice isFocusPointOfInterestSupported]),
              }];
-      [self sendDeviceOrientation:[UIDevice currentDevice].orientation];
       [_camera start];
       [result sendSuccess];
     } else if ([@"takePicture" isEqualToString:call.method]) {

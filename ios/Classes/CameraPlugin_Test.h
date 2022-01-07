@@ -25,10 +25,4 @@
 /// on the main dispatch queue.
 - (void)handleMethodCallAsync:(FlutterMethodCall *)call result:(FLTThreadSafeFlutterResult *)result;
 
-/// Called by the @c NSNotificationManager each time the device's orientation is changed.
-///
-/// @param notification @c NSNotification instance containing a reference to the `UIDevice` object
-/// that triggered the orientation change.
-- (void)orientationChanged:(NSNotification *)notification;
-
 @end
